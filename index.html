@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>🏀📚 籃球 & 讀書追蹤器（每日獨立版）</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-800">
+  <div class="max-w-5xl mx-auto p-4 sm:p-6">
+    <!-- 標題 -->
+    <header class="flex flex-col sm:flex-row gap-4 sm:items-end sm:justify-between">
+      <div>
+        <h1 class="text-3xl sm:text-4xl font-bold">🏀📚 每日訓練 & 讀書追蹤</h1>
+        <p class="text-sm text-slate-500 mt-1">每一天的任務與完成度都獨立存檔（localStorage）。</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <button onclick="goToday()" class="px-3 py-2 rounded-xl bg-white shadow hover:shadow-md">回到今天</button>
+        <div class="flex rounded-xl overflow-hidden shadow">
+          <button onclick="changeDay(-1)" class="px-3 py-2 bg-white hover:bg-slate-100">前一天</button>
+          <div id="dateLabel" class="px-3 py-2 bg-slate-100 font-semibold"></div>
+          <button onclick="changeDay(1)" class="px-3 py-2 bg-white hover:bg-slate-100">後一天</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- 統計區 -->
+    <section class="grid md:grid-cols-3 gap-4 mt-6">
+      <div class="p-4 rounded-2xl bg-white shadow">
+        <div class="text-sm text-slate-500">最近 7 天完成率</div>
+        <div id="completionRate" class="text-3xl font-bold mt-1">0%</div>
+      </div>
+      <div class="p-4 rounded-2xl bg-white shadow">
+        <div class="text-sm text-slate-500">連續打卡天數</div>
+        <div id="streakDays" class="text-3xl font-bold mt-1">0 天</div>
+      </div>
+      <div class="p-4 rounded-2xl bg-white shadow flex items-center justify-between">
+        <button onclick="showAddTask()" class="px-3 py-2 rounded-xl bg-slate-800 text-white hover:opacity-90">＋ 新增任務</button>
+        <div class="flex items-center gap-2">
+          <button onclick="exportAll()" class="px-3 py-2 rounded-xl bg-white shadow hover:shadow-md">匯出</button>
+          <label class="px-3 py-2 rounded-xl bg-white shadow hover:shadow-md cursor-pointer">
+            匯入<input type="file" accept="application/json" class="hidden" onchange="importAll(event)" />
+          </label>
+          <button onclick="resetToday()" class="px-3 py-2 rounded-xl bg-white shadow hover:shadow-md">清空今日</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 任務區 -->
+    <section class="grid lg:grid-cols-2 gap-6 mt-6">
+      <div class="p-4 rounded-2xl bg-white shadow">
+        <h2 class="text-xl font-bold mb-2">今日項目</h2>
+        <div id="taskList"></div>
+      </div>
+
+      <!-- 圖表 -->
+      <div class="p-4 rounded-2xl bg-white shadow">
+        <h2 class="text-xl font-bold mb-4">最近 7 天趨勢</h2>
+        <canvas id="trendChart" height="150"></canvas>
+        <h3 class="text-lg font-semibold mt-6">分類完成數</h3>
+        <canvas id="categoryChart" height="150"></canvas>
+      </div>
+    </section>
+
+    <!-- 新增任務彈窗 -->
+    <div id="addTaskModal" class="fixed inset-0 hidden bg-black/40 items-center justify-center p-4">
+      <div class="bg-white rounded-2xl shadow-xl w-full max-w-lg p-5">
+        <h3 class="text-xl font-bold mb-4">新增任務（只加入這一天）</h3>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label class="text-sm">
+            <div class="text-slate-500 mb-1">名稱</div>
+            <input id="taskTitle" class="w-full px-3 py-2 rounded-xl border border-slate-300" />
+          </label>
+          <label class="text-sm">
+            <div class="text-slate-500 mb-1">分類</div>
+            <select id="taskCategory" class="w-full px-3 py-2 rounded-xl border border-slate-300">
+              <option>籃球</option>
+              <option>讀書</option>
+            </select>
+          </label>
+          <label class="text-sm">
+            <div class="text-slate-500 mb-1">單位</div>
+            <input id="taskMetric" class="w-full px-3 py-2 rounded-xl border border-slate-300" value="分鐘" />
+          </label>
+          <label class="text-sm">
+            <div class="text-slate-500 mb-1">每日目標值</div>
+            <input id="taskTarget" type="number" min="1" class="w-full px-3 py-2 rounded-xl border border-slate-300" value="10" />
+          </label>
+        </div>
+        <div class="flex justify-end gap-2 mt-5">
+          <button onclick="hideAddTask()" class="px-3 py-2 rounded-xl bg-white border border-slate-200">取消</button>
+          <button onclick="addTask()" class="px-3 py-2 rounded-xl bg-slate-800 text-white">新增</button>
+        </div>
+      </div>
+    </div>
+
+    <footer class="text-center text-xs text-slate-400 mt-10">
+      Made with ❤️ — 每日獨立追蹤（GitHub Pages + localStorage）
+    </footer>
+  </div>
+
+  <script>
+    // ======= 資料模型（每日獨立） =======
+    // localStorage 裡存的是一個大物件：{ "2025-08-15": {tasks:[], entries:{}}, "2025-08-14": {...}, ... }
+    const STORAGE_KEY = "bst-tracker-daily-v2";
+    let db = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+    let currentDate = new Date();
+
+    const pad = (n) => n.toString().padStart(2, "0");
+    const keyOf = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+    function loadDay(k) {
+      if (!db[k]) db[k] = { tasks: [], entries: {} };
+      return db[k];
+    }
+    function saveDB() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+      render();
+    }
+
+    // ======= 基本操作 =======
+    function goToday() { currentDate = new Date(); render(); }
+    function changeDay(delta) { currentDate.setDate(currentDate.getDate() + delta); render(); }
+    function resetToday() {
+      const k = keyOf(currentDate);
+      db[k] = { tasks: [], entries: {} };
+      saveDB();
+    }
+
+    // ======= 任務 CRUD（都只對當天生效） =======
+    function showAddTask(){ const m = document.getElementById("addTaskModal"); m.classList.remove("hidden"); m.classList.add("flex"); }
+    function hideAddTask(){ document.getElementById("addTaskModal").classList.add("hidden"); }
+
+    function addTask() {
+      const title = document.getElementById("taskTitle").value.trim();
+      const category = document.getElementById("taskCategory").value;
+      const metric = document.getElementById("taskMetric").value.trim();
+      const target = parseInt(document.getElementById("taskTarget").value) || 0;
+      if (!title) return;
+
+      const k = keyOf(currentDate);
+      const day = loadDay(k);
+      day.tasks.push({ id: Math.random().toString(36).slice(2), title, category, metric, target });
+      hideAddTask();
+      saveDB();
+    }
+
+    function deleteTask(id) {
+      const k = keyOf(currentDate);
+      const day = loadDay(k);
+      day.tasks = day.tasks.filter(t => t.id !== id);
+      delete day.entries[id];
+      saveDB();
+    }
+
+    function updateValue(taskId, vRaw) {
+      const v = parseInt(vRaw) || 0;
+      const k = keyOf(currentDate);
+      const day = loadDay(k);
+      const task = day.tasks.find(t => t.id === taskId);
+      if (!task) return;
+      const completed = v >= task.target;
+      day.entries[taskId] = { value: v, completed };
+      saveDB();
+    }
+
+    function toggleDone(taskId) {
+      const k = keyOf(currentDate);
+      const day = loadDay(k);
+      const task = day.tasks.find(t => t.id === taskId);
+      if (!task) return;
+      const entry = day.entries[taskId] || { value: 0, completed: false };
+      const newCompleted = !entry.completed;
+      const newValue = newCompleted ? Math.max(entry.value, task.target) : entry.value;
+      day.entries[taskId] = { value: newValue, completed: newCompleted };
+      saveDB();
+    }
+
+    // ======= 匯入匯出（整庫） =======
+    function exportAll() {
+      const blob = new Blob([JSON.stringify(db)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `bst-tracker-daily-${keyOf(currentDate)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+    function importAll(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const data = JSON.parse(ev.target.result);
+          if (typeof data === "object" && data) {
+            db = data;
+            saveDB();
+          } else alert("檔案格式錯誤");
+        } catch { alert("JSON 解析失敗"); }
+      };
+      reader.readAsText(file);
+    }
+
+    // ======= UI 渲染 =======
+    let trendChart, categoryChart;
+    function render() {
+      // 日期顯示
+      document.getElementById("dateLabel").textContent = `${currentDate.getMonth() + 1}/${currentDate.getDate()}`;
+      const k = keyOf(currentDate);
+      const day = loadDay(k);
+
+      // 依分類渲染任務
+      const categories = [...new Set(day.tasks.map(t => t.category))];
+      let html = "";
+      categories.forEach(cat => {
+        html += `<div class="mb-4"><div class="text-sm font-semibold text-slate-500 mb-1">${cat}</div>`;
+        day.tasks.filter(t => t.category === cat).forEach(task => {
+          const entry = day.entries[task.id] || { value: 0, completed: false };
+          const progress = task.target ? Math.min(100, Math.round((entry.value / task.target) * 100)) : 0;
+          html += `
+            <div class="rounded-xl border border-slate-200 p-3 flex flex-col sm:flex-row sm:items-center gap-3 mb-2">
+              <div class="flex-1">
+                <div class="font-medium">${task.title}</div>
+                <div class="text-xs text-slate-500">目標：${task.target} ${task.metric}</div>
+                <div class="h-2 bg-slate-100 rounded mt-2">
+                  <div class="h-2 rounded" style="width:${progress}%; background:linear-gradient(90deg,#3b82f6,#10b981)"></div>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <input type="number" min="0" class="w-20 px-2 py-1 rounded-lg border border-slate-300"
+                  value="${entry.value}" oninput="updateValue('${task.id}', this.value)"/>
+                <div class="text-sm text-slate-500">${task.metric}</div>
+                <button onclick="toggleDone('${task.id}')"
+                  class="px-3 py-2 rounded-xl ${entry.completed ? 'bg-green-600' : 'bg-slate-800'} text-white">
+                  ${entry.completed ? '已完成' : '完成'}
+                </button>
+                <button onclick="deleteTask('${task.id}')" class="px-3 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50">刪除</button>
+              </div>
+            </div>`;
+        });
+        html += `</div>`;
+      });
+      if (day.tasks.length === 0) {
+        html = `<div class="text-slate-500 text-sm">今天還沒有任務，按右上角「＋ 新增任務」來建立吧！</div>`;
+      }
+      document.getElementById("taskList").innerHTML = html;
+
+      // 統計：最近 7 天完成率（以每日「完成數 / 當日任務總數」加權平均；沒有任務的日子不計入分母）
+      const last7Keys = [...Array(7)].map((_, i) => {
+        const d = new Date(currentDate); d.setDate(d.getDate() - (6 - i)); return keyOf(d);
+      });
+      let doneSum = 0, totalSum = 0;
+      last7Keys.forEach(kk => {
+        const dd = loadDay(kk);
+        const total = dd.tasks.length;
+        if (total === 0) return;
+        const done = Object.values(dd.entries).filter(x => x.completed).length;
+        doneSum += done; totalSum += total;
+      });
+      document.getElementById("completionRate").textContent = totalSum ? Math.round(doneSum / totalSum * 100) + "%" : "0%";
+
+      // 連續打卡天數（某天只要有一項完成即算）
+      let streak = 0;
+      const dtmp = new Date(currentDate);
+      while (true) {
+        const kk = keyOf(dtmp);
+        const dd = loadDay(kk);
+        const finished = Object.values(dd.entries || {}).filter(x => x.completed).length;
+        if (finished > 0) { streak++; dtmp.setDate(dtmp.getDate() - 1); }
+        else break;
+      }
+      document.getElementById("streakDays").textContent = `${streak} 天`;
+
+      // 圖表資料
+      const trendData = last7Keys.map(kk => {
+        const dt = new Date(kk);
+        const dd = loadDay(kk);
+        const label = `${dt.getMonth() + 1}/${dt.getDate()}`;
+        const done = Object.values(dd.entries).filter(x => x.completed).length;
+        return { label, done };
+      });
+
+      const allCategories = Array.from(new Set(last7Keys.flatMap(kk => loadDay(kk).tasks.map(t => t.category))));
+      const categoryRows = last7Keys.map(kk => {
+        const dt = new Date(kk);
+        const dd = loadDay(kk);
+        const row = { label: `${dt.getMonth() + 1}/${dt.getDate()}` };
+        allCategories.forEach(c => {
+          row[c] = dd.tasks
+            .filter(t => t.category === c)
+            .map(t => dd.entries[t.id])
+            .filter(e => e && e.completed).length;
+        });
+        return row;
+      });
+
+      // 畫圖
+      if (trendChart) trendChart.destroy();
+      if (categoryChart) categoryChart.destroy();
+
+      trendChart = new Chart(document.getElementById("trendChart"), {
+        type: "line",
+        data: {
+          labels: trendData.map(x => x.label),
+          datasets: [{
+            label: "完成項目數",
+            data: trendData.map(x => x.done),
+            borderColor: "#3b82f6",
+            backgroundColor: "#3b82f6",
+            tension: 0.3
+          }]
+        }
+      });
+
+      categoryChart = new Chart(document.getElementById("categoryChart"), {
+        type: "bar",
+        data: {
+          labels: categoryRows.map(r => r.label),
+          datasets: allCategories.map((c, i) => ({
+            label: c,
+            data: categoryRows.map(r => r[c]),
+            backgroundColor: i % 2 ? "#10b981" : "#f97316"
+          }))
+        }
+      });
+    }
+
+    // 啟動
+    render();
+  </script>
+</body>
+</html>
